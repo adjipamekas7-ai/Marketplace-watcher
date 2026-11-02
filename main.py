@@ -28,17 +28,16 @@ def start_server():
 threading.Thread(target=start_server, daemon=True).start()
 
 # --- KONFIGURASI ---
-TELEGRAM_TOKEN = "9007524894:AAFBMq7K4_mEo48qRmH0lxoWP8e9Uq-NSOc" 
+TELEGRAM_TOKEN = "9007524894:AAFBMq7K4_mEo48qRmH0lxoWP8e9Uq-NSOc"
 
-# Database sederhana di memori
+# Database ringkas di dalam memori
 monitored_products = [] 
-# Format: [{'chat_id': 12345, 'url': '...', 'platform': '...', 'title': '...', 'last_price': '...', 'last_stock': '...'}]
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # --- SCRAPER MENGGUNAKAN PLAYWRIGHT ---
 async def scrape_product(url):
-    """Scrape judul, harga, dan status stok berdasarkan link"""
+    """Scrape tajuk, harga, dan status stok berdasarkan pautan"""
     platform = "Unknown"
     if "shopee" in url:
         platform = "Shopee"
@@ -55,7 +54,7 @@ async def scrape_product(url):
         page = await context.new_page()
         
         try:
-            # Menggunakan domcontentloaded agar stabil dan tidak mudah macet
+            # Menggunakan domcontentloaded agar stabil dan tidak mudah tersangkut
             await page.goto(url, timeout=60000, wait_until="domcontentloaded")
             await asyncio.sleep(3) # Tunggu rendering JS selesai
 
@@ -107,12 +106,15 @@ async def scrape_product(url):
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 **Selamat Datang di Bot Pemantau Stok & Harga!**\n\n"
-        "Kirimkan link produk dari **Shopee**, **Tokopedia**, atau **TikTok Shop**.\n"
-        "*(Disarankan menggunakan link panjang/asli produk agar lebih cepat dibaca)*\n\n"
-        "Saya akan mengecek harga & stoknya secara otomatis setiap 15 menit!\n\n"
+        "Kirimkan pautan produk dari **Shopee**, **Tokopedia**, atau **TikTok Shop**.\n"
+        "*(Disarankan menggunakan pautan panjang/asli produk agar lebih pantas dibaca)*\n\n"
+        "Saya akan menyemak harga & stoknya secara automatik setiap 15 minit!\n\n"
         "Perintah:\n"
-        "/list - Lihat daftar produk dipantau\n"
-        "/clear - Hapus semua pantauan"
+        "/list - Lihat senarai produk dipantau\n"
+        "/clear - Padam semua pantauan\n"
+        "/restart - Segarkan sesi bot (pantauan tetap selamat)\n"
+        "/reboot - Tetap semula total bot (padam semua pantauan)",
+        parse_mode="Markdown"
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -124,7 +126,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     url = urls[0]
-    await update.message.reply_text("🔍 Memeriksa detail produk... Mohon tunggu sebentar.")
+    await update.message.reply_text("🔍 Memeriksa terperinci produk... Sila tunggu sebentar.")
     
     data = await scrape_product(url)
     
@@ -139,16 +141,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         
         reply_msg = (
-            f"✅ **Produk Berhasil Ditambahkan ke Pemantauan!**\n\n"
+            f"✅ **Produk Berjaya Ditambah ke Pemantauan!**\n\n"
             f"📌 **Platform:** {data['platform']}\n"
             f"📦 **Produk:** {data['title']}\n"
-            f"💰 **Harga Saat Ini:** {data['price']}\n"
+            f"💰 **Harga Semasa:** {data['price']}\n"
             f"📊 **Stok:** {data['stock']}\n\n"
-            f"🔄 *Pengecekan ulang akan dilakukan setiap 15 menit.*"
+            f"🔄 *Semakan semula akan dilakukan setiap 15 minit.*"
         )
         await update.message.reply_text(reply_msg, parse_mode="Markdown")
     else:
-        await update.message.reply_text("❌ Gagal mengambil data produk. Pastikan link produk valid atau coba gunakan link aslinya.")
+        await update.message.reply_text("❌ Gagal mendapatkan data produk. Sila pastikan pautan produk sah atau guna pautan asal.")
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
@@ -158,7 +160,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Belum ada produk yang dipantau.")
         return
 
-    msg = "📋 **Daftar Produk Dipantau:**\n\n"
+    msg = "📋 **Senarai Produk Dipantau:**\n\n"
     for idx, item in enumerate(user_items, 1):
         msg += f"{idx}. [{item['platform']}] {item['title']}\n💰 {item['last_price']} | 📦 {item['last_stock']}\n🔗 {item['url']}\n\n"
     
@@ -168,14 +170,38 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global monitored_products
     chat_id = update.message.chat_id
     monitored_products = [p for p in monitored_products if p["chat_id"] != chat_id]
-    await update.message.reply_text("🗑 Semua daftar pemantauan Anda telah dihapus.")
+    await update.message.reply_text("🗑 Semua senarai pantauan anda telah dipadam.")
 
-# --- JOB BERKALA 15 MENIT ---
+async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    user_items = [p for p in monitored_products if p["chat_id"] == chat_id]
+    
+    await update.message.reply_text(
+        f"🔄 **Bot Berjaya di-Restart!**\n\n"
+        f"Sesi bot telah disegarkan. Jangan bimbang, **{len(user_items)} produk** yang sedang anda pantau **kekal selamat** dan tidak dipadam.\n\n"
+        f"📋 Taip /list untuk melihat kembali senarai produk yang dipantau.",
+        parse_mode="Markdown"
+    )
+
+async def reboot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global monitored_products
+    chat_id = update.message.chat_id
+    monitored_products = [p for p in monitored_products if p["chat_id"] != chat_id]
+    
+    await update.message.reply_text(
+        "🔄 **Bot Berjaya di-Reboot!**\n\n"
+        "Semua proses pemantauan anda telah dibatalkan dan dipadam.\n\n"
+        "👋 **Selamat Datang Kembali ke Menu Utama Bot Pemantau Stok & Harga!**\n"
+        "Kirimkan pautan produk baharu dari Shopee, Tokopedia, atau TikTok Shop untuk mula memantau semula.",
+        parse_mode="Markdown"
+    )
+
+# --- JOB BERKALA 15 MINIT ---
 async def check_updates_job(app):
     if not monitored_products:
         return
 
-    logging.info("Memulai pengecekan berkala 15 menit...")
+    logging.info("Memulakan semakan berkala 15 minit...")
     for item in monitored_products:
         new_data = await scrape_product(item["url"])
         if new_data["status"]:
@@ -184,7 +210,7 @@ async def check_updates_job(app):
 
             if price_changed or stock_changed:
                 alert_msg = (
-                    f"🔔 **PERUBAHAN TERDETEKSI!**\n\n"
+                    f"🔔 **PERUBAHAN DIKESAN!**\n\n"
                     f"📦 **Produk:** {item['title']}\n"
                     f"🏪 **Platform:** {item['platform']}\n\n"
                     f"💰 **Harga:** {item['last_price']} ➡️ *{new_data['price']}*\n"
@@ -199,19 +225,18 @@ async def check_updates_job(app):
 
 async def schedule_checker(app):
     while True:
-        await asyncio.sleep(900) # 15 Menit
+        await asyncio.sleep(900) # 15 Minit
         await check_updates_job(app)
 
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
-    if not TELEGRAM_TOKEN:
-        raise ValueError("TELEGRAM_TOKEN belum disetel di environment variables!")
-        
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("clear", clear_command))
+    app.add_handler(CommandHandler("restart", restart_command))
+    app.add_handler(CommandHandler("reboot", reboot_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     loop = asyncio.get_event_loop()
