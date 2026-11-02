@@ -1,13 +1,22 @@
 import os
 import http.server
 import threading
+import asyncio
+import logging
+import re
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from playwright.async_api import async_playwright
 
-# Server HTTP mini agar Render mendeteksi port aktif
+# --- SERVER HTTP MINI UNTUK RENDER ---
 class SimpleHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot Pemantau Produk Aktif!")
+
+    def log_message(self, format, *args):
+        pass # Menonaktifkan log HTTP agar terminal bersih
 
 def start_server():
     port = int(os.environ.get("PORT", 10000))
@@ -15,25 +24,15 @@ def start_server():
     httpd = http.server.HTTPServer(server, SimpleHandler)
     httpd.serve_forever()
 
-# Jalankan server mini di background
+# Jalankan server mini di background agar Render mendeteksi port aktif
 threading.Thread(target=start_server, daemon=True).start()
 
-import asyncio
-import logging
-import re
-import time
-import schedule
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from playwright.async_api import async_playwright
-
 # --- KONFIGURASI ---
-TELEGRAM_TOKEN = "9007524894:AAFBMq7K4_mEo48qRmH0lxoWP8e9Uq-NSOc"
-MY_CHAT_ID = "GANTI_DENGAN_CHAT_ID_ANDA" # Atau biarkan bot mengirim ke chat tempat link ditambahkan
+TELEGRAM_TOKEN = "9007524894:AAFBMq7K4_mEo48qRmH0lxoWP8e9Uq-NSOc" 
 
-# Database sederhana di memori (Gunakan SQLite/JSON jika ingin tersimpan permanen saat restart)
+# Database sederhana di memori
 monitored_products = [] 
-# Format: [{'url': '...', 'platform': '...', 'last_price': '...', 'last_stock': '...', 'chat_id': 12345}]
+# Format: [{'chat_id': 12345, 'url': '...', 'platform': '...', 'title': '...', 'last_price': '...', 'last_stock': '...'}]
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -49,7 +48,6 @@ async def scrape_product(url):
         platform = "TikTok Shop"
 
     async with async_playwright() as p:
-        # Menjalankan headless browser dengan User-Agent browser asli
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -57,7 +55,8 @@ async def scrape_product(url):
         page = await context.new_page()
         
         try:
-            await page.goto(url, timeout=60000, wait_until="networkidle")
+            # Menggunakan domcontentloaded agar stabil dan tidak mudah macet
+            await page.goto(url, timeout=60000, wait_until="domcontentloaded")
             await asyncio.sleep(3) # Tunggu rendering JS selesai
 
             title = await page.title()
@@ -70,7 +69,6 @@ async def scrape_product(url):
                 if price_elem:
                     price = await price_elem.inner_text()
                 
-                # Cek stok habis
                 out_of_stock = await page.query_selector('text="Stok Habis"')
                 if out_of_stock:
                     stock_status = "Habis"
@@ -81,7 +79,6 @@ async def scrape_product(url):
                 if price_elem:
                     price = await price_elem.inner_text()
                 
-                # Cek tombol beli/stok
                 buy_button = await page.query_selector('.btn-solid-primary--disabled')
                 if buy_button:
                     stock_status = "Habis"
@@ -95,8 +92,8 @@ async def scrape_product(url):
             await browser.close()
             return {
                 "platform": platform,
-                "title": title[:40] + "...",
-                "price": price.strip(),
+                "title": title[:40] + "..." if title else "Produk E-Commerce",
+                "price": price.strip() if price else "Tidak terdeteksi",
                 "stock": stock_status,
                 "status": True
             }
@@ -111,6 +108,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 **Selamat Datang di Bot Pemantau Stok & Harga!**\n\n"
         "Kirimkan link produk dari **Shopee**, **Tokopedia**, atau **TikTok Shop**.\n"
+        "*(Disarankan menggunakan link panjang/asli produk agar lebih cepat dibaca)*\n\n"
         "Saya akan mengecek harga & stoknya secara otomatis setiap 15 menit!\n\n"
         "Perintah:\n"
         "/list - Lihat daftar produk dipantau\n"
@@ -121,20 +119,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     chat_id = update.message.chat_id
 
-    # Filter URL
     urls = re.findall(r'(https?://[^\s]+)', text)
     if not urls:
-        await update.message.reply_text("Silakan kirimkan URL/Link produk yang valid.")
         return
 
     url = urls[0]
     await update.message.reply_text("🔍 Memeriksa detail produk... Mohon tunggu sebentar.")
     
-    # Scrape awal
     data = await scrape_product(url)
     
     if data["status"]:
-        # Simpan ke database pemantauan
         monitored_products.append({
             "chat_id": chat_id,
             "url": url,
@@ -154,7 +148,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(reply_msg, parse_mode="Markdown")
     else:
-        await update.message.reply_text("❌ Gagal mengambil data produk. Pastikan link valid atau coba lagi nanti.")
+        await update.message.reply_text("❌ Gagal mengambil data produk. Pastikan link produk valid atau coba gunakan link aslinya.")
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
@@ -176,9 +170,8 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     monitored_products = [p for p in monitored_products if p["chat_id"] != chat_id]
     await update.message.reply_text("🗑 Semua daftar pemantauan Anda telah dihapus.")
 
-# --- JOB ATURAN 15 MENIT ---
+# --- JOB BERKALA 15 MENIT ---
 async def check_updates_job(app):
-    """Fungsi berkala untuk mengecek perubahan harga & stok"""
     if not monitored_products:
         return
 
@@ -189,7 +182,6 @@ async def check_updates_job(app):
             price_changed = new_data["price"] != item["last_price"]
             stock_changed = new_data["stock"] != item["last_stock"]
 
-            # Kirim notifikasi jika ada perubahan harga atau stok
             if price_changed or stock_changed:
                 alert_msg = (
                     f"🔔 **PERUBAHAN TERDETEKSI!**\n\n"
@@ -200,20 +192,21 @@ async def check_updates_job(app):
                     f"🔗 [Klik untuk Beli]({item['url']})"
                 )
                 
-                # Update data terbaru
                 item["last_price"] = new_data["price"]
                 item["last_stock"] = new_data["stock"]
                 
                 await app.bot.send_message(chat_id=item["chat_id"], text=alert_msg, parse_mode="Markdown")
 
 async def schedule_checker(app):
-    """Loop interval 15 menit (900 detik)"""
     while True:
         await asyncio.sleep(900) # 15 Menit
         await check_updates_job(app)
 
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
+    if not TELEGRAM_TOKEN:
+        raise ValueError("TELEGRAM_TOKEN belum disetel di environment variables!")
+        
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
@@ -221,7 +214,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Jalankan background scheduler bersamaan dengan Telegram Bot
     loop = asyncio.get_event_loop()
     loop.create_task(schedule_checker(app))
 
