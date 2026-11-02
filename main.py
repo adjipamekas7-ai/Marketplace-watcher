@@ -28,7 +28,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from playwright.async_api import async_playwright
 
 # --- KONFIGURASI ---
-TELEGRAM_TOKEN = 9007524894:AAFBMq7K4_mEo48qRmH0lxoWP8e9Uq-NSOc
+TELEGRAM_TOKEN = "9007524894:AAFBMq7K4_mEo48qRmH0lxoWP8e9Uq-NSOc"
 MY_CHAT_ID = "GANTI_DENGAN_CHAT_ID_ANDA" # Atau biarkan bot mengirim ke chat tempat link ditambahkan
 
 # Database sederhana di memori (Gunakan SQLite/JSON jika ingin tersimpan permanen saat restart)
