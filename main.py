@@ -1,3 +1,23 @@
+import os
+import http.server
+import threading
+
+# Server HTTP mini agar Render mendeteksi port aktif
+class SimpleHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot Pemantau Produk Aktif!")
+
+def start_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = ('0.0.0.0', port)
+    httpd = http.server.HTTPServer(server, SimpleHandler)
+    httpd.serve_forever()
+
+# Jalankan server mini di background
+threading.Thread(target=start_server, daemon=True).start()
+
 import asyncio
 import logging
 import re
